@@ -53,7 +53,7 @@ OpenMontage/
 │   ├── subtitle/           # SRT/VTT generation from timestamps
 │   └── video/              # 13 video gen providers, composition, stitching, trimming
 │
-├── pipeline_defs/          # 11 YAML pipeline manifests
+├── pipeline_defs/          # YAML pipeline manifests
 ├── schemas/                # JSON Schema definitions for validation
 │   ├── artifacts/          # 11 artifact schemas (brief → publish_log)
 │   ├── checkpoints/        # Checkpoint state schema
@@ -65,9 +65,9 @@ OpenMontage/
 │   ├── core/               # FFmpeg, Remotion, WhisperX, color grading skills
 │   ├── creative/           # Video editing, enhancement, data viz, prompt engineering
 │   ├── meta/               # reviewer, checkpoint-protocol, skill-creator
-│   └── pipelines/          # Per-pipeline stage-director skills (10 pipelines)
+│   └── pipelines/          # Per-pipeline stage-director skills
 │
-├── .agents/skills/         # Layer 3: 47 external technology skills (FFmpeg, ElevenLabs, FLUX, etc.)
+├── .agents/skills/         # Layer 3: external technology skills (FFmpeg, HyperFrames, GSAP, etc.)
 ├── styles/                 # Visual style playbooks (YAML) + loader
 ├── remotion-composer/      # Node.js/React — Remotion video composition renderer
 ├── tests/                  # Contract tests, QA integration tests, eval harness
@@ -200,13 +200,14 @@ stages:
   # ... through publish
 ```
 
-### Available Pipelines (11)
+### Available Pipelines
 
 | Pipeline | Category | Description |
 |----------|----------|-------------|
 | `animated-explainer` | generated | AI-produced explainer with research, narration, visuals, music |
 | `animation` | animation | Motion graphics, kinetic typography |
 | `avatar-spokesperson` | talking_head | Avatar-driven presenter videos |
+| `character-animation` | animation | Local rigged cartoon characters with SVG rigs, pose libraries, GSAP timelines, and HyperFrames rendering |
 | `cinematic` | cinematic | Trailer, teaser, mood-driven edits |
 | `clip-factory` | custom | Batch short-form clips from long source |
 | `hybrid` | hybrid | Source footage + AI-generated support visuals |
@@ -218,7 +219,7 @@ stages:
 
 ### Standard Stage Progression
 
-All production pipelines follow a canonical 8-stage flow:
+Most production pipelines follow a canonical 8-stage flow:
 
 ```
 research → proposal → script → scene_plan → assets → edit → compose → publish
@@ -230,6 +231,11 @@ Each stage:
 3. **Produces** one or more canonical artifacts
 4. Has **review_focus** criteria and **success_criteria**
 5. Can require **human approval** before proceeding
+
+Specialized pipelines may insert domain-specific stages. For example,
+`character-animation` adds `character_design` and `rig_plan` before
+`scene_plan`, then emits a HyperFrames workspace and final deliverable at
+`projects/<project-name>/renders/final.mp4`.
 
 ---
 
@@ -423,13 +429,33 @@ Each profile specifies codec, audio codec, CRF, pixel format, max file size, max
 
 ---
 
-## Remotion Composer
+## Composition Runtimes
 
-A standalone Node.js/React subproject in `remotion-composer/` for programmatic video composition using [Remotion](https://www.remotion.dev/).
+OpenMontage has a multi-runtime composition layer. Three engines live behind `video_compose`, chosen at proposal and locked in `edit_decisions.render_runtime`:
+
+### Remotion (React-based)
+
+A standalone Node.js/React subproject in `remotion-composer/` using [Remotion](https://www.remotion.dev/).
 
 - **React 18** + **Remotion 4.0** + **TypeScript 5.3**
-- Used by `video_compose` tool for complex compositions
+- Handles the existing scene-component stack (`text_card`, `stat_card`, charts, captions, `TalkingHead`, `CinematicRenderer`)
 - Scripts: `start` (studio), `build` (render), `upgrade`
+
+### HyperFrames (HTML/CSS/GSAP)
+
+Consumed via `npx hyperframes` (no monorepo checkout needed). Runtime floor: Node.js ≥ 22, FFmpeg, `npx`.
+
+- Handles kinetic typography, product promos, launch reels, website-to-video, registry blocks, and SVG/GSAP character rigs
+- Driver: `tools/video/hyperframes_compose.py` materializes a workspace under `projects/<name>/hyperframes/`, then runs `lint → validate → render`
+- Layer 3 skills vendored at `.agents/skills/hyperframes*/`; Layer 2 guide at `skills/core/hyperframes.md`
+- The `character-animation` pipeline uses HyperFrames as the production render package. Browser previews are QA/debug artifacts only, not the render path.
+
+### FFmpeg (fallback / simple cuts)
+
+- Handles pure concat/trim when no composition is needed
+- Also handles subtitle burn-in as a post-hoc operation
+
+`video_compose` reads `edit_decisions.render_runtime` and dispatches via `_render_via_hyperframes`, `_remotion_render`, or `_render_via_ffmpeg`. Silent runtime swaps are forbidden — the tool returns a structured blocker when the chosen runtime is unavailable. See `AGENT_GUIDE.md` → "Composition Runtimes (Inside video_compose)" and `skills/core/hyperframes.md` for the full decision matrix.
 
 ---
 

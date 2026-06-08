@@ -6,6 +6,18 @@ After completing any pipeline stage's work — before checkpointing. You are the
 
 Every stage gets reviewed. No exceptions. The review quality determines whether the final video is worth watching.
 
+## Critique Quality (CHAI Rules)
+
+> Findings ≠ critiques. A finding identifies a problem; a critique tells the next stage how to fix it. The CMU/Harvard CHAI study ("Building a Precise Video Language with Human-AI Oversight", arXiv 2604.21718v2) showed that critique quality, measured on three axes, directly governs downstream output quality. Apply all three to every reviewer pass.
+>
+> **Accurate.** Every finding must reference a concrete artifact field, line number, or visible asset frame. Forbid hallucinated criticism — if you cannot point to where the problem is, you are guessing.
+>
+> **Complete.** A reviewer pass that catches one mistake while missing a second is worse than scoring "needs another pass" and continuing. If you find one critical issue, scan for the rest of the same class before returning. Pattern-match: where else in this artifact could the same mistake be hiding?
+>
+> **Constructive.** Every "critical" finding MUST propose a concrete fix, not just identify the problem. "Caption is wrong" → "Caption says 'man on the right'; the man is on the left of the frame. Replace with 'the man on the left of the frame.'" If you cannot propose a fix, label the finding as "investigation" not "critical."
+>
+> Removing any of these three properties measurably hurts pipeline output. The reviewer is the choke point — be rigorous.
+
 ## Protocol
 
 ### Step 1: Load Review Context
@@ -27,9 +39,10 @@ First, the non-negotiable check:
 For each `review_focus` item from the manifest:
 1. Evaluate the artifact against this specific criterion
 2. Assign a severity:
-   - **critical** — Must fix before proceeding. The artifact is broken, incomplete, or dangerously wrong.
-   - **suggestion** — Should fix. Improves quality significantly but doesn't block progress.
-   - **nitpick** — Could fix. Minor polish that's nice-to-have.
+   - **critical** — Must fix before proceeding. The artifact is broken, incomplete, or dangerously wrong. **Per CHAI rules, every critical finding MUST carry a `proposed_fix` (concrete replacement text, exact field value, or specific corrective action). A critical finding without a proposed fix is downgraded to `investigation`.**
+   - **suggestion** — Should fix. Improves quality significantly but doesn't block progress. **Suggestions MUST carry a `proposed_change` describing how to improve.**
+   - **nitpick** — Could fix. Minor polish that's nice-to-have. May stand alone without a proposed change.
+   - **investigation** — A real concern but you cannot pinpoint the fix. Surface it for the next round; do not block on it.
 3. Write a specific, actionable finding (not vague)
 
 **Good finding:** "Section 3 narration is 180 words for a 10-second window — that's 1080 wpm, impossible to speak. Cut to 25 words."
@@ -108,7 +121,7 @@ Structure your review as:
 | Stage | What matters most |
 |-------|-----------------|
 | research | Source diversity, claim verifiability, visual reference quality |
-| proposal | Delivery promise clarity, renderer family selection, music/voice plan, decision log started |
+| proposal | Delivery promise clarity, renderer family AND render runtime selection, music/voice plan, decision log started |
 | idea | Hook uniqueness, research depth, angle diversity |
 | script | Timing accuracy, narrative arc, enhancement cue density |
 | scene_plan | Full coverage, visual variety, asset feasibility, slideshow risk score |
@@ -219,6 +232,18 @@ Run at **scene_plan** and **edit** stages. Prevents the "every video looks the s
 4. **Renderer family match** (edit stage):
    - Does `renderer_family` in edit_decisions match what was set at proposal?
    - If changed without documented reason in decision log → **CRITICAL**
+
+5. **Render runtime match** (edit and compose stages):
+   - `render_runtime` in edit_decisions must match proposal_packet.production_plan.render_runtime
+   - If changed without a `render_runtime_selection` decision logged in decision_log → **CRITICAL**
+   - At compose stage, `final_review.checks.promise_preservation.runtime_swap_detected` must be `false`. If `true` without an approved `render_runtime_selection` decision → **CRITICAL**
+   - Runtime unavailable at compose time is not an excuse for silent swap — the correct behavior is to escalate, get approval, log a decision, then run.
+
+6. **Runtime selection presented both options** (proposal stage, MANDATORY):
+   - Query `video_compose.get_info()["render_engines"]`. If both `remotion` and `hyperframes` show `True`, the `render_runtime_selection` decision in `decision_log` MUST have BOTH runtimes in `options_considered`.
+   - A `render_runtime_selection` with only one runtime in `options_considered` when both were available on the machine → **CRITICAL**. The agent silently defaulted; the user was not presented the alternative. Re-open the proposal stage and present both.
+   - If only one runtime was available, `options_considered` must still list the unavailable one with `rejected_because: "runtime not available on this machine"` — otherwise the audit trail loses the fact that the choice was constrained, not discretionary.
+   - Per AGENT_GUIDE.md > "Present Both Composition Runtimes (HARD RULE)": the pipeline's suggested "default" runtime is NOT a license to skip the conversation with the user.
 
 ## Delivery Promise Review
 
